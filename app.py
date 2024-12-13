@@ -6,6 +6,8 @@ from py2neo import Graph, Node, Relationship
 from dotenv import load_dotenv
 import os
 import time
+import logging.handlers
+
 
 # Загрузка переменных окружения из файла .env
 load_dotenv()
@@ -19,6 +21,18 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(
 
 # Подключение к базе данных Neo4j
 graph = Graph(os.getenv('NEO4J_URL'), auth=(os.getenv('NEO4J_USER'), os.getenv('NEO4J_PASSWORD')))
+
+def setup_logging(log_file=None, log_level=logging.INFO):
+    handlers = []
+    if log_file:
+        handlers.append(logging.FileHandler(log_file))
+    handlers.append(logging.StreamHandler())
+    
+    logging.basicConfig(
+        level=log_level,
+        format='%(asctime)s - %(levelname)s - %(message)s',
+        handlers=handlers
+    )
 
 def clear_database():
     """Очистка базы данных перед новым запуском."""
@@ -136,6 +150,33 @@ def query_mutual_followers():
     )
     return graph.run(query).data()
 
+#Дополнительный запросы
+
+def query_common_subscriptions():
+    query = (
+        "MATCH (n:User)-[:Subscribe]->(g:Group)<-[:Subscribe]-(m:User) "
+        "WHERE n <> m "
+        "RETURN n.id AS user1_id, n.name AS user1_name, m.id AS user2_id, m.name AS user2_name, g.id AS group_id, g.name AS group_name"
+    )
+    return graph.run(query).data()
+
+def query_inactive_users():
+    query = (
+        "MATCH (n:User) "
+        "WHERE NOT (n)-[:Subscribe]->() AND NOT (n)-[:Follow]->() "
+        "RETURN n.id AS user_id, n.name AS user_name"
+    )
+    return graph.run(query).data()
+
+def query_mutual_follow_and_subscribe():
+    query = (
+        "MATCH (n:User)-[:Follow]->(m:User), (m)-[:Follow]->(n), "
+        "(n)-[:Subscribe]->(g:Group), (m)-[:Subscribe]->(g) "
+        "RETURN n.id AS user1_id, n.name AS user1_name, m.id AS user2_id, m.name AS user2_name, g.id AS group_id, g.name AS group_name"
+    )
+    return graph.run(query).data()
+
+
 def main(user_id):
     clear_database()
     process_user(user_id)
@@ -146,9 +187,20 @@ def main(user_id):
     logging.info(f"Топ 5 пользователей по количеству фолловеров: {query_top_5_followers()}")
     logging.info(f"Топ 5 самых популярных групп: {query_top_5_popular_groups()}")
     logging.info(f"Все пользователи, которые фолловеры друг друга: {query_mutual_followers()}")
+    
+    logging.info(f"Пользователи, которые подписаны на одинаковые группы: {query_common_subscriptions()}")
+    logging.info(f"Пассивные пользователи (без подписок и фолловеров): {query_inactive_users()}")
+    logging.info(f"Пользователи, которые одновременно фолловеры и подписаны друг на друга: {query_mutual_follow_and_subscribe()}")
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='VK API User Info')
     parser.add_argument('--user_id', type=int, default=274881868, help='ID пользователя ВК')
+    parser.add_argument('--log_level', type=str, default='INFO', choices=['DEBUG', 'INFO', 'WARNING', 'ERROR', 'CRITICAL'], help='Уровень логирования')
+    parser.add_argument('--log_file', type=str, help='Файл для сохранения логов')
+    
     args = parser.parse_args()
+    
+    # Настройка логирования
+    setup_logging(log_file=args.log_file, log_level=getattr(logging, args.log_level.upper()))
+    
     main(args.user_id)
